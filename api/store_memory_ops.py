@@ -4,7 +4,6 @@ import re
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres import AsyncPostgresStore
-# from langgraph.store.postgres.base import PoolConfig
 from langgraph.store.postgres.aio import PoolConfig
 
 

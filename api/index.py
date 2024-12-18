@@ -561,7 +561,7 @@ async def get_authenticated_user_websocket(websocket: WebSocket):
 @app.websocket("/api/llm_chat/{conversation_id}")
 async def websocket_llm_chat(conversation_id: str, websocket: WebSocket, current_user: dict = Depends(get_authenticated_user_websocket)):
     user_id = current_user.get('user_id')
-    config = {"configurable": {'user_id': user_id ,"conversation_id": conversation_id}}
+    config = {"configurable": {'user_id': user_id ,"thread_id": conversation_id}}
     await websocket.accept()
     try:
         await websocket.send_text("Connected to LLM WebSocket! Start sending your queries.")
