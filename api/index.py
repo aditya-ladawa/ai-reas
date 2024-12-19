@@ -43,7 +43,7 @@ import re
 import traceback
 
 
-from api.redis_ops import add_conversation, initialize_redis, close_redis_connection, fetch_user_conversations, fetch_conversation, update_conversation_files, delete_file_from_redis
+from api.redis_ops import add_conversation, initialize_redis, close_redis_connection, fetch_user_conversations, fetch_conversation, update_conversation_files, delete_file_from_redis, delete_conversation_from_redis
 
 from fastapi.responses import FileResponse
 
@@ -638,8 +638,8 @@ async def websocket_llm_chat(conversation_id: str, websocket: WebSocket, current
 #     return {'user_data': p_data}
 
 
-@app.get('/api/get_user_data_from_store')
-async def get_user_data_from_store(store=Depends(get_psql_store), current_user=Depends(get_authenticated_user), conversation_id: Optional[str] = None):
+@app.get('/api/get_data_from_store')
+async def get_data_from_store(store=Depends(get_psql_store), current_user=Depends(get_authenticated_user), conversation_id: Optional[str] = None):
     user_id = current_user.get('user_id')
 
     try:
@@ -679,31 +679,31 @@ async def get_user_data_from_store(store=Depends(get_psql_store), current_user=D
         )
 
 
-@app.delete('/api/delete_store_data')
-async def delete_store_data(conversation_id: str, store = Depends(get_psql_store), current_user = Depends(get_authenticated_user)):
-    user_id = current_user.get('user_id')
+# @app.delete('/api/delete_store_data')
+# async def delete_store_data(conversation_id: str, store = Depends(get_psql_store), current_user = Depends(get_authenticated_user)):
+#     user_id = current_user.get('user_id')
     
-    namespace = ("conversation_metadata", user_id, conversation_id)
+#     namespace = ("conversation_metadata", user_id, conversation_id)
     
-    try:
-        r = await store.asearch(namespace)
+#     try:
+#         r = await store.asearch(namespace)
         
-        if not r:
-            return {'message': 'No items found in the namespace to delete'}
+#         if not r:
+#             return {'message': 'No items found in the namespace to delete'}
         
-        deleted_items_count = 0
-        for item in r:
-            key = item.key if hasattr(item, 'key') else None  # Use .key if item has it
-            if key:
-                await store.adelete(namespace=namespace, key=key)
-                deleted_items_count += 1
+#         deleted_items_count = 0
+#         for item in r:
+#             key = item.key if hasattr(item, 'key') else None  # Use .key if item has it
+#             if key:
+#                 await store.adelete(namespace=namespace, key=key)
+#                 deleted_items_count += 1
         
-        # Return a response with the number of deleted items
-        return {'message': f'{deleted_items_count} item(s) deleted from the namespace successfully'}
+#         # Return a response with the number of deleted items
+#         return {'message': f'{deleted_items_count} item(s) deleted from the namespace successfully'}
 
-    except Exception as e:
-        # Handle any exceptions that occur during the process
-        return {'error': f'An error occurred: {str(e)}'}
+#     except Exception as e:
+#         # Handle any exceptions that occur during the process
+#         return {'error': f'An error occurred: {str(e)}'}
 
 
 
@@ -761,29 +761,143 @@ async def purge_file(file_name: str, conversation_id: str, store = Depends(get_p
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
-@app.delete('/api/delete_conversation_info')
-async def delete_conversation_info(conversation_id: str, store=Depends(get_psql_store), current_user=Depends(get_authenticated_user)):
+# @app.delete('/api/delete_conversation_info')
+# async def delete_conversation_info(conversation_id: str, store=Depends(get_psql_store), current_user=Depends(get_authenticated_user)):
+#     user_id = current_user.get('user_id')
+#     namespace = ('conversation_info', user_id)
+
+#     try:
+#         infos = await store.asearch(namespace)
+
+#         if not infos:
+#             return {'message': "No items to delete"}
+
+
+#         deleted_items_count = 0
+#         for item in infos:
+#             key = item.key if hasattr(item, 'key') else None  # Use .key if item has it
+#             if key:
+#                 await store.adelete(namespace=namespace, key=conversation_id)
+#                 deleted_items_count += 1
+        
+#         return {'message': f'{deleted_items_count} item(s) deleted from the namespace successfully'}
+
+#     except Exception as e:
+#         return {'error': f'An error occurred: {str(e)}'}
+
+
+
+@app.delete('/api/delete_conversation')
+async def delete_conversation(conversation_id: str, store=Depends(get_psql_store), current_user=Depends(get_authenticated_user)):
+    """
+    Deletes all data related to a given conversation ID from storage, metadata store, and Redis.
+    Checks if the conversation exists in Redis, local file system, and store before attempting deletion.
+    """
     user_id = current_user.get('user_id')
-    namespace = ('conversation_info', user_id)
+    del_msg = ''
+    final_msg = {"storage": "", "metadata_in_store": "", "conversation_info_in_store": "", "redis": ""}
 
     try:
-        infos = await store.asearch(namespace)
+        # Step 1: Check if the conversation exists in Redis, File storage, and Store (Conversation info)
+        try:
+            await fetch_conversation(user_id, conversation_id)
+            final_msg["redis"] = "Conversation found in Redis."
+        except ValueError as e:
+            final_msg["redis"] = f"Conversation not found in Redis: {str(e)}"
 
-        if not infos:
-            return {'message': "No items to delete"}
+        # Check File storage
+        user_storage_path = os.path.join(APIS, 'users_storage', user_id, conversation_id)
+        if os.path.exists(user_storage_path) and os.listdir(user_storage_path):
+            final_msg["storage"] = "Conversation found in File storage."
+        else:
+            final_msg["storage"] = "Conversation not found in File storage."
 
+        # Check metadata in PostgreSQL store
+        metadata_keys = await store.asearch(("conversation_metadata", user_id, conversation_id))
+        metadata_keys = [key for key in metadata_keys if key.startswith("metadata_")]
+        final_msg["metadata_in_store"] = "Metadata found in Conversation Memory storage." if metadata_keys else "No metadata found."
 
-        deleted_items_count = 0
-        for item in infos:
-            key = item.key if hasattr(item, 'key') else None  # Use .key if item has it
-            if key:
-                await store.adelete(namespace=namespace, key=conversation_id)
-                deleted_items_count += 1
-        
-        return {'message': f'{deleted_items_count} item(s) deleted from the namespace successfully'}
+        # Check conversation info in store
+        conversation = await store.aget(('conversation_info', user_id), key=conversation_id)
+        final_msg["conversation_info_in_store"] = "Conversation info found in Memory." if conversation else "Conversation info not found"
+
+        # If conversation not found in any of the sources, return early
+        if final_msg["redis"] == "Conversation not found in Redis." and \
+           final_msg["storage"] == "Conversation not found in File storage." and \
+           final_msg["metadata_in_store"] == "No metadata found." and \
+           final_msg["conversation_info_in_store"] == "Conversation info not found":
+            return {"message": f"Conversation {conversation_id} not found in any of the sources. No data to delete."}
+
+        # Step 2: Delete files from storage (File System) and Qdrant
+        if final_msg["storage"] == "Conversation found in File storage.":
+            try:
+                for file_name in os.listdir(user_storage_path):
+                    file_path = os.path.join(user_storage_path, file_name)
+                    try:
+                        await delete_file_from_storage(file_path)
+                        del_msg += f"\nDeleted file '{file_name}' from file storage."
+                    except Exception as e:
+                        del_msg += f"\nError deleting file '{file_name}' from file storage: {str(e)}"
+                        
+                    try:
+                        await delete_file_from_qdrant(qclient_, file_name=file_name)
+                        del_msg += f"\nDeleted file '{file_name}' from Qdrant."
+                    except Exception as qdrant_error:
+                        del_msg += f"\nError deleting file '{file_name}' from Qdrant: {str(qdrant_error)}"
+
+                try:
+                    os.rmdir(user_storage_path)  # Remove the conversation directory if empty
+                    final_msg["storage"] = "Deleted files from File storage."
+                except OSError as e:
+                    del_msg += f"\nError deleting empty directory '{user_storage_path}': {str(e)}"
+            except Exception as e:
+                del_msg += f"\nError during file deletion: {str(e)}"
+
+        # Step 3: Delete metadata from PostgreSQL store
+        if final_msg["metadata_in_store"] == "Metadata found in Conversation Memory storage.":
+            try:
+                for key in metadata_keys:
+                    try:
+                        await store.adelete(("conversation_metadata", user_id, conversation_id), key)
+                        del_msg += f"\nDeleted metadata key '{key}' from Conversation Memory storage."
+                    except Exception as e:
+                        del_msg += f"\nError deleting metadata key '{key}': {str(e)}"
+                final_msg["metadata_in_store"] = "Deleted metadata from Conversation Memory storage."
+            except Exception as e:
+                del_msg += f"\nError deleting metadata: {str(e)}"
+
+        # Step 4: Delete conversation info from store
+        if final_msg["conversation_info_in_store"] == "Conversation info found in Memory.":
+            try:
+                await store.adelete(('conversation_info', user_id), conversation_id)
+                del_msg += f"\nDeleted {conversation_id} from conversation_info."
+                final_msg["conversation_info_in_store"] = "Deleted conversation info from store."
+            except Exception as e:
+                del_msg += f"\nError deleting conversation info: {str(e)}"
+
+        # Step 5: Delete data from Redis
+        if final_msg["redis"] == "Conversation found in Redis.":
+            try:
+                redis_response = await delete_conversation_from_redis(user_id, conversation_id)
+                del_msg += f"\n{redis_response['message']}"
+                final_msg["redis"] = "Deleted conversation data from Redis."
+            except Exception as e:
+                del_msg += f"\nError deleting conversation data from Redis: {str(e)}"
+                final_msg["redis"] = f"Failed to delete from Redis: {str(e)}"
+
+        # Final summary message
+        final_msg_str = f"Final Summary: \n" \
+                        f"Storage: {final_msg['storage']}\n" \
+                        f"Metadata: {final_msg['metadata_in_store']}\n" \
+                        f"Conversation Info: {final_msg['conversation_info_in_store']}\n" \
+                        f"Redis: {final_msg['redis']}"
+
+        # return {"message": f"Conversation {conversation_id} purged successfully: {del_msg}\n{final_msg_str}"}
+        return {"message": f"{final_msg_str}"}
 
     except Exception as e:
-        return {'error': f'An error occurred: {str(e)}'}
+        return {"message": f"Unexpected error: {str(e)}"}
+
 
 
 # @app.delete('/api/delete_user')

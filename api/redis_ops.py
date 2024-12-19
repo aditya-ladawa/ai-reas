@@ -186,3 +186,38 @@ async def delete_file_from_redis(user_id: str, conversation_id: str, file_name: 
 
     except Exception as e:
         raise Exception(f"Error deleting file from Redis: {str(e)}")
+
+
+
+async def delete_conversation_from_redis(user_id: str, conversation_id: str):
+    """
+    Deletes all data associated with a conversation ID from Redis.
+
+    Args:
+        user_id (str): The user ID.
+        conversation_id (str): The conversation ID.
+
+    Returns:
+        dict: A message indicating the status of the deletion process.
+
+    Raises:
+        Exception: If an error occurs during the deletion process.
+    """
+    user_conversations_key = f"user:{user_id}:conversations"
+
+    try:
+        # Step 1: Fetch the conversation data from Redis
+        conversation_json = await redis_client.hget(user_conversations_key, conversation_id)
+        
+        if not conversation_json:
+            return {"message": f"Conversation with ID {conversation_id} does not exist in Redis."}
+
+        # Step 2: Delete the conversation itself from Redis
+        await redis_client.hdel(user_conversations_key, conversation_id)
+
+        return {
+            "message": f"Conversation {conversation_id} and all associated data were successfully deleted from Redis."
+        }
+
+    except Exception as e:
+        raise Exception(f"Error deleting conversation {conversation_id} from Redis: {str(e)}")

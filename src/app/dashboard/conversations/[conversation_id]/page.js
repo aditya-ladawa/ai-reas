@@ -72,7 +72,7 @@ export default function ConversationPage() {
     };
 
     websocketRef.current.onerror = (error) => {
-      console.error("WebSocket error:", error);
+      console.log("WebSocket error:", error);
     };
 
     websocketRef.current.onclose = () => {
