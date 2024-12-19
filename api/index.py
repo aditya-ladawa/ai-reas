@@ -62,7 +62,7 @@ from langgraph.store.postgres.aio import PoolConfig
 
 from api.file_ops import delete_file_from_storage
 
-
+from typing_extensions import Optional
 
 load_dotenv()
 
@@ -340,40 +340,40 @@ async def get_uploaded_files(conversation_id: str, current_user: dict = Depends(
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
-@app.post('/api/retrieve')
-def retrieve(query_request: QueryRequest,   ):
-    """Retrieves relevant PDF information based on the query."""
-    try:
-        # Get the embeddings for the query
-        query_embeddings = EMBEDDING_MODEL.embed_query(query_request.query)
+# @app.post('/api/retrieve')
+# def retrieve(query_request: QueryRequest, store: Depends(get_psql_store)):
+#     """Retrieves relevant PDF information based on the query."""
+#     try:
+#         # Get the embeddings for the query
+#         query_embeddings = EMBEDDING_MODEL.embed_query(query_request.query)
 
-        # Query points from Qdrant
-        search_result = qdrant_client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_embeddings,
-            with_payload=True,
-            limit=query_request.top_k,
-        )
+#         # Query points from Qdrant
+#         search_result = qdrant_client.query_points(
+#             collection_name=COLLECTION_NAME,
+#             query=query_embeddings,
+#             with_payload=True,
+#             limit=query_request.top_k,
+#         )
 
-        # Extracting necessary details
-        results = []
-        if hasattr(search_result, 'points'):
-            for point in search_result.points:  # Access the points attribute
-                results.append({
-                    "id": point.id,
-                    "score": point.score,
-                    "pdf_name": point.payload.get('pdf_name', 'N/A'),  # Use get to avoid KeyError
-                    "text": point.payload.get('text', 'N/A'),
-                })
+#         # Extracting necessary details
+#         results = []
+#         if hasattr(search_result, 'points'):
+#             for point in search_result.points:  # Access the points attribute
+#                 results.append({
+#                     "id": point.id,
+#                     "score": point.score,
+#                     "pdf_name": point.payload.get('pdf_name', 'N/A'),  # Use get to avoid KeyError
+#                     "text": point.payload.get('text', 'N/A'),
+#                 })
 
-        return {"points": results}
+#         return {"points": results}
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/signup", status_code=201)
-async def signup(user: UserCreate):
+async def signup(user: UserCreate, store = Depends(get_psql_store)):
     existing_user = await get_user_by_email(user.email.lower())
     if existing_user:
         raise HTTPException(
@@ -395,6 +395,16 @@ async def signup(user: UserCreate):
             email=user.email.strip().lower(),
         )
 
+        signed_up_user_id = new_user.user_id
+        signed_up_user_name = new_user.user_name
+        signed_up_user_email = new_user.email
+
+        await store.aput(
+            namespace=('users'),
+            key=signed_up_user_id,
+            value={'name': signed_up_user_name, 'email': signed_up_user_email}
+        )
+
         return JSONResponse(
             content={
                 "message": f"User {new_user.user_name} successfully registered.",
@@ -403,7 +413,7 @@ async def signup(user: UserCreate):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail="An unexpected error occurred during signup. Please try again later.",
+            detail=f"An unexpected error occurred during signup. Please try again later. {e}",
         )
 
 
@@ -456,7 +466,7 @@ async def logout(response: Response):
 
 
 @app.post('/api/add_conversation')
-async def add_conversation_route(request: AssignTopic, current_user: dict = Depends(get_authenticated_user)):
+async def add_conversation_route(request: AssignTopic, current_user: dict = Depends(get_authenticated_user), store = Depends(get_psql_store)):
     """
     API route to add a conversation.
     """
@@ -481,11 +491,16 @@ async def add_conversation_route(request: AssignTopic, current_user: dict = Depe
         # Add conversation to Redis
         result = await add_conversation(user_id, email, name, description, assigned_topic)
 
+        await store.aput(namespace=('conversation_info', result['user_id']), key=result['conversation_id'], value={'conversation_name': name, 'topic': result['conversation_data']['topic']})
+
+
+        conversation_info = await store.aget(namespace=('conversation_info', result['user_id']), key=result['conversation_id'])
         # Return success message
         return {
             "message": "Conversation added successfully",
             "conversation_id": result["conversation_id"],
-            "assigned_topic": assigned_topic
+            "assigned_topic": assigned_topic,
+            'store': conversation_info.value,
         }
 
     except HTTPException as e:
@@ -601,15 +616,67 @@ async def websocket_llm_chat(conversation_id: str, websocket: WebSocket, current
         print("WebSocket connection closed.")
 
 
-@app.get('/api/get_store_data')
-async def get_store_data(conversation_id, store = Depends(get_psql_store), current_user = Depends(get_authenticated_user)):
+# @app.get('/api/get_conversation_memories_from_store')
+# async def get_conversation_memories_from_store(conversation_id, store = Depends(get_psql_store), current_user = Depends(get_authenticated_user)):
+#     user_id = current_user.get('user_id')
+
+#     r = await store.asearch(("conversation_metadata", user_id, conversation_id))
+    
+#     r_data = [item.dict() for item in r]
+
+#     return {'store data': r_data}
+
+
+
+# @app.get('/api/get_user_data_from_store')
+# async def get_user_data_from_store(store = Depends(get_psql_store), current_user = Depends(get_authenticated_user)):
+#     user_id = current_user.get('user_id')
+
+#     p = await store.aget(('users'), key=user_id)
+#     p_data = p.value
+    
+#     return {'user_data': p_data}
+
+
+@app.get('/api/get_user_data_from_store')
+async def get_user_data_from_store(store=Depends(get_psql_store), current_user=Depends(get_authenticated_user), conversation_id: Optional[str] = None):
     user_id = current_user.get('user_id')
 
-    r = await store.asearch(("conversation_metadata", user_id, conversation_id))
-    
-    r_data = [item.dict() for item in r]
-    
-    return {'store data': r_data}
+    try:
+        p = await store.aget(('users',), key=user_id)
+        if p is None:
+            raise HTTPException(
+                status_code=404,
+                detail="User data not found in the store."
+            )
+        user_data = p.value
+
+        if conversation_id:
+            try:
+                r = await store.asearch(("conversation_metadata", user_id, conversation_id))
+                r_data = [item.dict() for item in r]
+
+                t = await store.aget(namespace=('conversation_info',), key=conversation_id)
+                t_data = t.value if t else None
+
+                return {
+                    'user_data': user_data,
+                    'conversation_metadata': r_data,
+                    'conversation_info': t_data
+                }
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error while retrieving conversation data: {str(e)}"
+                )
+
+        return {'user_data': user_data}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
+        )
 
 
 @app.delete('/api/delete_store_data')
@@ -692,3 +759,50 @@ async def purge_file(file_name: str, conversation_id: str, store = Depends(get_p
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+@app.delete('/api/delete_conversation_info')
+async def delete_conversation_info(conversation_id: str, store=Depends(get_psql_store), current_user=Depends(get_authenticated_user)):
+    user_id = current_user.get('user_id')
+    namespace = ('conversation_info', user_id)
+
+    try:
+        infos = await store.asearch(namespace)
+
+        if not infos:
+            return {'message': "No items to delete"}
+
+
+        deleted_items_count = 0
+        for item in infos:
+            key = item.key if hasattr(item, 'key') else None  # Use .key if item has it
+            if key:
+                await store.adelete(namespace=namespace, key=conversation_id)
+                deleted_items_count += 1
+        
+        return {'message': f'{deleted_items_count} item(s) deleted from the namespace successfully'}
+
+    except Exception as e:
+        return {'error': f'An error occurred: {str(e)}'}
+
+
+# @app.delete('/api/delete_user')
+# async def delete_user(current_user =  Depends(get_authenticated_user), store = Depends(get_psql_store)):
+
+#     # delete user's storage dir along with conversations
+
+#     # delete vectors from db associated with the user
+
+#     # delete memories from store
+
+#     # delete user and conversations metadata from redis
+
+#     # delete memory from checkpointer
+
+#     # delete from sql db
+
+#     pass
+
+
+
+
