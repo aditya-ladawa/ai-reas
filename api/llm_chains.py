@@ -152,7 +152,11 @@ def rephrase_chain(llm):
 
 def get_plan_chain(llm):
     few_shot_rewoo = """
-    You will be given a simple question or sub-questions separated by commas that are decomposed from the original question. For each question, develop a sequential plan that specifies exactly which agents to use to retrieve the necessary evidence. A subquestion typically corresponds to one individual step or action in the overall plan. It is a focused inquiry that breaks down a larger task or process into smaller, more manageable parts. When addressing the question or subquestions, follow the detailed instructions below.
+    You will be given a simple question or sub-questions separated by commas that are decomposed from the original question. 
+    Develop a sequential plan that specifies exactly which agents to use to retrieve the necessary evidence. 
+    A subquestion typically corresponds to one individual step or action in the overall plan. 
+    It is a focused inquiry that breaks down a larger task or process into smaller, more manageable parts. 
+    When addressing the question or subquestions, follow the detailed instructions below.
 
     Format:
     Plan: [Provide a concise description of the intended action, including any specific sources, search queries, or steps that must be followed. Reference any evidence needed from previous steps.]
@@ -160,7 +164,7 @@ def get_plan_chain(llm):
 
     Instructions for Plan Creation:
     - Use the minimum number of plans necessary to provide an accurate and relevant answer.
-    - Each plan should be followed by only one #E, with clear sequential ordering for reference by subsequent steps.
+    - Each plan should be followed by only one #E, with clear sequential ordering for reference by subsequent steps. (STRICTLY FOLLOW THE GIVEN FORMAT)
     - Create a complete plan that addresses all subquestions as a whole, rather than developing individual plans for each question separately.
     - PLEASE TAKE NOTE - FOR MOST CASES YOU WILL NOT BE REQUIRED TO USE ALL THE AGENTS FOR THE GIVEN PLAN. ADJUST ACCORDING TO COMPLEXITY OF THE USER QUESTION.
 
@@ -172,12 +176,10 @@ def get_plan_chain(llm):
 
     Instructions on Considering Conversation History:
     - Incorporate relevant information or context from past messages when creating plans.
-    - If past messages contain partial results, instructions, or clarifications, ensure they are factored into the plan and appropriately referenced in queries.
     - Summarize past messages, if necessary, to create precise and well-informed agent queries.
 
     Advice:
     - Ensure that each agent query reflects the task at hand and leverages any relevant conversation history or past messages to optimize results.
-    - Use the RagSearcher for retrieval from pre-embedded research papers in vectorDB, the Searcher for broader academic or web searches, and other agents as needed for task-specific actions.
 
     Example 1:
     Task: Summarize recent advancements in Video Transformers for action recognition tasks.
@@ -200,6 +202,18 @@ def get_plan_chain(llm):
     Task: {task}
     """
 
+    rag_guidance = """
+    You will receive guidance from a knowledge base checking agent to determine if the RagSearcher step is required.
+    'Relevant': Include RagSearcher step in the plan.
+    'Non-relevant': Do not include RagSearcher step in the plan.
+
+    Gudiance from knowledge checking agent: Task is '{knowledge_chain_answer}' to the knowledge in the database.
+    """
+
+#    - If past messages contain partial results, instructions, or clarifications, ensure they are factored into the plan and appropriately referenced in queries.
+#    - Use the RagSearcher for retrieval from pre-embedded research papers in vectorDB, the Searcher for broader academic or web searches, and other agents as needed for task-specific actions.
+
+
     trimmer = trim_messages(
     max_tokens=5984,
     strategy="last",
@@ -207,13 +221,12 @@ def get_plan_chain(llm):
     include_system=True,
     allow_partial=False,)
 
-    prompt_template = ChatPromptTemplate.from_messages(
+    prompt_template = ChatPromptTemplate(
         [
             ('system', few_shot_rewoo),
-            MessagesPlaceholder(variable_name="messages"),
+            ('system', rag_guidance),
         ]
     )
-    # prompt_template = ChatPromptTemplate.from_template(few_shot_rewoo)
 
     planner = prompt_template | trimmer | llm | (lambda x: x.content)
     return planner
@@ -291,9 +304,9 @@ def memory_decision_chain(llm):
 class knowledgeBaseCheck(TypedDict):
   evaluation: Literal['Relevant', 'Non-relevant']
 
-def check_knowledge_base(llm):
+def check_knowledge_base_chain(llm):
   template='''
-  You will be given the current research papers embedded as vectors in Qdrant vector database.
+  You will be given a set of research papers present in database.
   It will include title of paper and authors of that paper and description in two to three lines about what the paper is talking about based on the abstract of the paper.
   your task is to evaluate whether the given user query relates to the knowledge present in vector db.
   so that planner agent can understand whether to include RAG search step in the plan.
@@ -310,7 +323,7 @@ def check_knowledge_base(llm):
 
   knowledge_check_prompt = ChatPromptTemplate.from_template(template)
   
-  knowledge_check_chain = knowledge_check_prompt | trimmer | structured_output_llm | (lambda x : x['evaluation'])
+  knowledge_check_chain = knowledge_check_prompt | structured_output_llm | (lambda x : x['evaluation'])
 
   return knowledge_check_chain
 

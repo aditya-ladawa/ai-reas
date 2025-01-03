@@ -54,9 +54,12 @@ qdrant_retriever_tool = qdrant_retriever.as_tool(
     name="retrieve_research_paper_texts",
     description="Search and return information from the vector database containing texts of several research papers, and scholarly articles",
 )
-react_agent = create_react_agent(model=llm, checkpointer=MemorySaver(),tools=[qdrant_retriever_tool, arxiv_search_tool, tavily_search_tool], state_modifier="You are a helpful research assistant. Help user to the best of your abilities. Provide concise but accurate and up to point answers. As of now you have these tools in your arsenal: qdrant_retriever_tool (content retrieval from vector database), arxiv_search_tool (search research papers), tavily_search tool (internet search). If you do not know the answer, then simply say 'I don't know. If you need clarification on what exactly user wants, then ask the user again. If you know the answer to user's query then answer yourself, else you can also rely on tools you have.")
+
+
+# react_agent = create_react_agent(model=llm, checkpointer=MemorySaver(),tools=[qdrant_retriever_tool, arxiv_search_tool, tavily_search_tool], state_modifier="You are a helpful research assistant. Help user to the best of your abilities. Provide concise but accurate and up to point answers. As of now you have these tools in your arsenal: qdrant_retriever_tool (content retrieval from vector database), arxiv_search_tool (search research papers), tavily_search tool (internet search). If you do not know the answer, then simply say 'I don't know. If you need clarification on what exactly user wants, then ask the user again. If you know the answer to user's query then answer yourself, else you can also rely on tools you have.")
 
 
 
+tools_for_agent = [qdrant_retriever_tool, arxiv_search_tool, tavily_search_tool]
 
 metadata_extraction_chain = basic_metadata_extraction_chain(llm=llm)

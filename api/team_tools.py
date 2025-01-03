@@ -11,7 +11,10 @@ from typing import List, Annotated
 from qdrant_client import QdrantClient
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.tools import StructuredTool, ToolException
-from api.qdrant_cloud_ops import connect_to_qdrant
+try:
+    from api.qdrant_cloud_ops import connect_to_qdrant
+except ImportError:
+    from qdrant_cloud_ops import connect_to_qdrant
 
 client = connect_to_qdrant()
 COLLECTION_NAME = 'aireas-cloud'

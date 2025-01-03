@@ -24,7 +24,8 @@ from api.sql_ops import init_db, create_user, get_user_by_email, verify_password
 from fastapi.responses import JSONResponse
 from api.pydantic_models import *
 
-from api.chat_handlers import assign_chat_topic_chain, llm, react_agent, metadata_extraction_chain
+from api.chat_handlers import assign_chat_topic_chain, llm, metadata_extraction_chain, tools_for_agent, trimmer_last
+from langgraph.prebuilt import create_react_agent
 
 from fastapi.security import OAuth2PasswordBearer
 
@@ -48,11 +49,10 @@ from api.redis_ops import add_conversation, initialize_redis, close_redis_connec
 from fastapi.responses import FileResponse
 
 
-from api.store_memory_ops import get_checkpointer, extract_paper_metadata_with_chain, DB_URI_CHECKPOINTER, DB_URI_STORE, store_pool_config, connection_kwargs, make_json_serializable, ensure_serializable_dict
+from api.store_memory_ops import extract_paper_metadata_with_chain, DB_URI_CHECKPOINTER, DB_URI_STORE, store_pool_config, connection_kwargs, make_json_serializable, ensure_serializable_dict, prepare_system_message
+
 from contextlib import asynccontextmanager
 
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.store.postgres import AsyncPostgresStore
 
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -63,6 +63,11 @@ from langgraph.store.postgres.aio import PoolConfig
 from api.file_ops import delete_file_from_storage
 
 from typing_extensions import Optional
+
+from langchain_core.prompts import ChatPromptTemplate
+
+
+
 
 load_dotenv()
 
@@ -75,32 +80,37 @@ qdrant_client = qclient_
 APIS = os.path.join(os.getcwd(), 'api')
 
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
     await init_db()
     print('\nStarted SQL db')
-
 
     await initialize_redis()
     print('\nStarted Redis connection')
 
+    async with AsyncConnectionPool(conninfo=DB_URI_CHECKPOINTER, max_size=20, kwargs=connection_kwargs) as pool:
+        checkpointer = AsyncPostgresSaver(pool)
+        await checkpointer.setup()
+        app.state.checkpointer = checkpointer
+        print('\nInitialized Postgres Checkpointer\n')
 
-    checkpointer = await get_checkpointer()
-    app.state.checkpointer = checkpointer
-    print('\nInitialized Postgres Checkpointer\n')
+        # Initialize Postgres Store
+        async with AsyncPostgresStore.from_conn_string(conn_string=DB_URI_STORE, pool_config=store_pool_config) as store:
+            await store.setup()
+            app.state.store = store
+            print('\nInitialized Postgres Store\n')
 
-    async with AsyncPostgresStore.from_conn_string(conn_string=DB_URI_STORE, pool_config=store_pool_config) as store:
-        await store.setup()
-        app.state.store = store
+            # Application lifespan starts here
+            yield  # This is the active lifespan context
 
-        yield {'app.state.store': app.state.store}
+        # Cleanup store (if necessary)
+        del app.state.store
 
-    yield
-
+    del app.state.checkpointer
 
     await close_redis_connection()
+    print("\nClosed Redis connection")
+
 
 # Initialize FastAPI
 app = FastAPI(docs_url="/api/docs", openapi_url="/api/openapi.json", debug=True, lifespan=lifespan)
@@ -573,47 +583,63 @@ async def get_authenticated_user_websocket(websocket: WebSocket):
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
+
 @app.websocket("/api/llm_chat/{conversation_id}")
-async def websocket_llm_chat(conversation_id: str, websocket: WebSocket, current_user: dict = Depends(get_authenticated_user_websocket)):
-    user_id = current_user.get('user_id')
-    config = {"configurable": {'user_id': user_id ,"thread_id": conversation_id}}
+async def websocket_llm_chat(
+    conversation_id: str,
+    websocket: WebSocket,
+    current_user: dict = Depends(get_authenticated_user_websocket),
+    checkpointer=Depends(get_psql_checkpointer),
+    store=Depends(get_psql_store)
+):  
+    config = {"configurable": {"user_id": current_user.get("user_id"), "thread_id": conversation_id}}
+
+    agent_graph = create_react_agent(
+        model=llm, 
+        tools=tools_for_agent, 
+        state_modifier=prepare_system_message,
+        store=store, 
+        checkpointer=checkpointer,
+    )
+
     await websocket.accept()
+
     try:
         await websocket.send_text("Connected to LLM WebSocket! Start sending your queries.")
 
         seen_tool_calls = set()
 
-        while True:
+        while True: 
             user_query = await websocket.receive_text()
 
-            query = {'messages': [HumanMessage(content=user_query)]}
+            query = {"messages": [HumanMessage(content=user_query)]}
 
-            async for event in react_agent.astream(query, stream_mode='values', config=config):
-                if 'messages' not in event:
+            async for event in agent_graph.astream(query, stream_mode="values", config=config):
+                if "messages" not in event:
                     continue
 
-                for msg in event['messages']:
-                    if isinstance(msg, HumanMessage):
-                        continue
+                latest_msg = event["messages"][-1]  # Get the latest message
 
-                    elif isinstance(msg, AIMessage) and not msg.content:
-                        tool_calls = msg.additional_kwargs['tool_calls']
+                # Check for tool usage in the latest message
+                if isinstance(latest_msg, AIMessage) and not latest_msg.content:
+                    tool_calls = latest_msg.additional_kwargs.get("tool_calls", [])
+                    for tool_call in tool_calls:
+                        tool_name = tool_call["function"]["name"]
+                        args = tool_call["function"]["arguments"]
 
-                        for tool_call in tool_calls:
-                            tool_name = tool_call['function']['name']
-                            args = tool_call['function']['arguments']
+                        tool_call_id = (tool_name, str(args))
+                        if tool_call_id not in seen_tool_calls:
+                            seen_tool_calls.add(tool_call_id)
+                            await websocket.send_text(f"Calling tool: {tool_name}\nTool arguments: {args}")
 
-                            tool_call_id = (tool_name, str(args))
-                            if tool_call_id not in seen_tool_calls:
-                                seen_tool_calls.add(tool_call_id)
-                                await websocket.send_text(f"Calling tool: {tool_name}\nTool arguments: {args}")
-
-                    elif isinstance(msg, AIMessage):
-                        if msg.content:
-                            await websocket.send_text(msg.content)
+                # Send the latest AI-generated content
+                elif isinstance(latest_msg, AIMessage) and latest_msg.content:
+                    await websocket.send_text(latest_msg.content)
 
     except WebSocketDisconnect:
         print("WebSocket connection closed.")
+
+
 
 
 # @app.get('/api/get_conversation_memories_from_store')
@@ -707,7 +733,7 @@ async def get_data_from_store(store=Depends(get_psql_store), current_user=Depend
 
 
 
-@app.delete('/api/purge_files')
+@app.delete('/api/purge_file')
 async def purge_file(file_name: str, conversation_id: str, store = Depends(get_psql_store), current_user = Depends(get_authenticated_user)):
     try:
         user_id = current_user.get('user_id')
@@ -897,6 +923,45 @@ async def delete_conversation(conversation_id: str, store=Depends(get_psql_store
 
     except Exception as e:
         return {"message": f"Unexpected error: {str(e)}"}
+
+
+@app.get('/api/prepare_model_inputs')
+async def prepare_model_inputs(
+    conversation_id: str,
+    current_user=Depends(get_authenticated_user),
+    store=Depends(get_psql_store),
+):
+    # Prepare configuration
+    config = {"configurable": {"user_id": current_user.get("user_id"), "thread_id": conversation_id}}
+
+    user_id = config["configurable"]["user_id"]
+    thread_id = config["configurable"]["thread_id"]
+
+    # Fetch user data
+    user_data_item = await store.aget(("users",), user_id)
+    user_data = user_data_item.value if user_data_item else {}
+
+    # Fetch conversation memories
+    conversation_memories = await store.asearch(("conversation_metadata", user_id, thread_id))
+    memory_info = "\n".join(
+        f"{item.key.replace('metadata_', '')} | "
+        f"{item.value.get('title', 'Unknown')} | "
+        f"{', '.join(item.value.get('authors', []))} | "
+        f"{item.value.get('description', 'Unknown')}"
+        for item in conversation_memories
+    )
+
+    # Fetch conversation info
+    conversation_info_item = await store.aget(("conversation_info", user_id), thread_id)
+    conversation_info = conversation_info_item.value if conversation_info_item else {}
+
+    # Construct system message
+    user_info = f"Name: {user_data.get('name', 'Unknown')}, Email: {user_data.get('email', 'Unknown')}."
+    conv_info = f"Topic: {conversation_info.get('topic', 'Unknown')}, Conversation Name: {conversation_info.get('conversation_name', 'Unknown')}."
+    system_msg = f"User Info: {user_info}\nConversation Info: {conv_info}\nFiles in vector DB and storage:\n{memory_info}"
+
+    # Return structured message
+    return [{"role": "system", "content": system_msg}]
 
 
 
