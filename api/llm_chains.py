@@ -152,11 +152,10 @@ def rephrase_chain(llm):
 
 def get_plan_chain(llm):
     few_shot_rewoo = """
-    You will be given a simple question or sub-questions separated by commas that are decomposed from the original question. 
-    Develop a sequential plan that specifies exactly which agents to use to retrieve the necessary evidence. 
-    A subquestion typically corresponds to one individual step or action in the overall plan. 
-    It is a focused inquiry that breaks down a larger task or process into smaller, more manageable parts. 
-    When addressing the question or subquestions, follow the detailed instructions below.
+    You are a planner agent.
+    Supervisor will prvide you with a task and you will develop a sequential plan that specifies exactly which agents to use to retrieve the necessary evidence. 
+    IMPORTANT: ALWAYS TAKE MINIMUM NUMBER OF PLAN STEPS TO ACCOMPLISH THE GIVEN TASK.
+    When addressing the query follow the below format to create a step by step plan.
 
     Format:
     Plan: [Provide a concise description of the intended action, including any specific sources, search queries, or steps that must be followed. Reference any evidence needed from previous steps.]
@@ -167,20 +166,23 @@ def get_plan_chain(llm):
     - Each plan should be followed by only one #E, with clear sequential ordering for reference by subsequent steps. (STRICTLY FOLLOW THE GIVEN FORMAT)
     - Create a complete plan that addresses all subquestions as a whole, rather than developing individual plans for each question separately.
     - PLEASE TAKE NOTE - FOR MOST CASES YOU WILL NOT BE REQUIRED TO USE ALL THE AGENTS FOR THE GIVEN PLAN. ADJUST ACCORDING TO COMPLEXITY OF THE USER QUESTION.
+    - Use the 'Coder' agent only when Python code is required for calculations, visualizations, or when explicitly asked to write code. Ensure you fully understand the question before resorting to the 'Coder' agent.
 
     Agents Available:
-    - RagSearcher[input]: Uses a vector database to retrieve relevant documents or research papers based on prior knowledge or pre-embedded content (use for tasks related to research papers in the form of PDFs or topics embedded in the database).
-    - Searcher[input]: Conducts searches via Tavily search, Web Scraper, or Arxiv Search to retrieve both general web information and academic papers from online sources.
-    - Coder[input]: A code-execution agent using Python REPL for tasks requiring code, data analysis, or visualizations.
-    - ChatBot[input]: Processes or generates natural language responses based on gathered evidence or specific input.
+    - RagSearcher[input]: Retrieves relevant documents or research papers using a vector database (qdrant_retriever_tool). Ideal for tasks involving PDFs or embedded topics.
+    - Searcher[input]: Performs web searches with tavily_search_tool for general info or academic papers from online sources.
+    - ArXivSearcher[input]: Searches for academic papers on ArXiv using arxiv_search_tool.
+    - Coder[input]: Executes Python code via repl_tool for programming, data analysis, and visualizations.
+    - ChatBot[input]: Generates natural language responses based on input or gathered evidence for conversational tasks.
 
     Instructions on Considering Conversation History:
-    - Incorporate relevant information or context from past messages when creating plans.
+    - You will also be able to read last few messages of the given conversation (whichever could be fitted in your context window). Incorporate relevant information or context from past messages when creating plans.
     - Summarize past messages, if necessary, to create precise and well-informed agent queries.
+
 
     Advice:
     - Ensure that each agent query reflects the task at hand and leverages any relevant conversation history or past messages to optimize results.
-
+    
     Example 1:
     Task: Summarize recent advancements in Video Transformers for action recognition tasks.
     Plan: Search for recent publications on Arxiv that discuss Video Transformers for action recognition using the Searcher agent.
@@ -208,7 +210,13 @@ def get_plan_chain(llm):
     'Non-relevant': Do not include RagSearcher step in the plan.
 
     Gudiance from knowledge checking agent: Task is '{knowledge_chain_answer}' to the knowledge in the database.
+
+    Please strictly output the plan only. Do not try to solve the query or task yourself Your only task is to plan.
     """
+# You will be given a simple question or sub-questions separated by commas that are decomposed from the original question.
+#     A subquestion typically corresponds to one individual step or action in the overall plan. 
+#    It is a focused inquiry that breaks down a larger task or process into smaller, more manageable parts. 
+#    When addressing the question or subquestions, follow the detailed instructions below.
 
 #    - If past messages contain partial results, instructions, or clarifications, ensure they are factored into the plan and appropriately referenced in queries.
 #    - Use the RagSearcher for retrieval from pre-embedded research papers in vectorDB, the Searcher for broader academic or web searches, and other agents as needed for task-specific actions.
@@ -225,6 +233,7 @@ def get_plan_chain(llm):
         [
             ('system', few_shot_rewoo),
             ('system', rag_guidance),
+            (MessagesPlaceholder('messages'))
         ]
     )
 
@@ -306,17 +315,15 @@ class knowledgeBaseCheck(TypedDict):
 
 def check_knowledge_base_chain(llm):
   template='''
-  You will be given a set of research papers present in database.
-  It will include title of paper and authors of that paper and description in two to three lines about what the paper is talking about based on the abstract of the paper.
-  your task is to evaluate whether the given user query relates to the knowledge present in vector db.
-  so that planner agent can understand whether to include RAG search step in the plan.
+    You will be given a set of research papers present in the vector database. Each paper will include the title, authors, and a brief description of the paper based on its abstract.
 
-  Papers present in database as vector embeddings:
-  {data}
+    Additionally, you will also have access to recent conversation history. Using this information, your task is to evaluate whether the given user query relates to the knowledge present in the vector database. This will help the planner agent decide whether to include the RAG search step in the plan.
 
-  user query:
-  {query}
+    Papers present in the database as vector embeddings: {data}
 
+    User query: {query}
+
+    Recent messages: {recent_messages}
   '''
 
   structured_output_llm = llm.with_structured_output(knowledgeBaseCheck)
