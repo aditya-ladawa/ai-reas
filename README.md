@@ -1,6 +1,6 @@
 # AI-Based Research Assistant
 
-This is an AI-based research assistant project developed as part of an MSc in Data Science at TU Braunschweig. The project is designed to help users with complex research tasks, using state-of-the-art AI models and technologies. 
+This is an AI-based research assistant project by a solo developer (MSc in Data Science at TU Braunschweig) (ongoing 1st semester). The project is designed to help users with complex research tasks, using state-of-the-art AI models and technologies. 
 ### It is currently ongoing, with integration tasks still to be completed. Due to upcoming exams, active development is paused.
 
 ---
