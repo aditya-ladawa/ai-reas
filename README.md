@@ -1,7 +1,7 @@
 # AI-Based Research Assistant
 
 This is an AI-based research assistant project developed as part of an MSc in Data Science at TU Braunschweig. The project is designed to help users with complex research tasks, using state-of-the-art AI models and technologies. 
-# It is currently ongoing, with integration tasks still to be completed. Due to upcoming exams, active development is paused.
+### It is currently ongoing, with integration tasks still to be completed. Due to upcoming exams, active development is paused.
 
 ---
 
@@ -11,7 +11,9 @@ This is an AI-based research assistant project developed as part of an MSc in Da
 - **Frontend and Backend Integration**: Currently in progress. The frontend (Next.js) will need to be fully integrated with the backend (FastAPI) to handle user interactions, API requests, and agent operations.
 - **Vision Models**: Vision models will be used in the future, along with text embedding, to improve the research process (e.g., using a Vision Transformer for image embedding).
 - **Llama-3.3-70B Fine-Tuning**: Fine-tuning of the Llama-3.3-70B model is planned to enhance reasoning and thinking capabilities.
+- **Erron handling in agents**: Handling cases where agent's process crashes due to any error.
 
+##### Except complete_graph.py, extras.ipynb and extras dir, every other .py file has necessary functional code and all are important. (LOCATION: /api/)
 ---
 
 ## **Project Overview**
@@ -76,14 +78,14 @@ This research assistant leverages various AI technologies to support research ta
 
 ### **Database Tasks**
 1. **Vector Embedding Storage**: Creates and stores vector embeddings in Qdrant Cloud DB.
-2. **PDF Storage**: Stores PDFs in a file system based on `/userID/ConversationID` directory structure.
+2. **PDF Storage**: Stores PDFs in a file system based on `api/users_storage/__userID__/__ConversationID__` directory structure.
 3. **PDF Associations**: Tracks which PDFs are associated with which ConversationIDs in RedisDB.
 4. **Structured Output Extraction**: Extracts structured output from PDFs, including title, authors, and description.
 5. **Agent Memory Injection**: Injects PDFs into agent memory to make them accessible for relevant tasks.
 
 ### **Overall Flow**
 1. **Supervisor**: The supervisor is responsible for analyzing queries and delegating tasks across the teams. The supervisor also plans the delegation order (e.g., for researching positrons: `{'LLM': 'General info on positron', 'ResearcherTeam': 'Recent research on positrons'}`).
-2. **Researcher Team**: This team has several agents that collaborate. A planner agent organizes the research process, and the results are summarized for the user.
+2. **Researcher Team**: This team has several agents that collaborate. A planner agent organizes the research process, the tasks in the given plan are executed, and the results are summarized for the user.
 3. **Documentation Team**: This team consists of agents that determine the best approach for each state of the task (e.g., summarizing a report, creating outlines).
 4. **Graph Memory**: Throughout the flow, the graph keeps track of conversation history and memory, which allows the system to reference past information during the task flow.
 
