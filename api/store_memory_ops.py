@@ -6,14 +6,18 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres import AsyncPostgresStore
 from langgraph.store.postgres.aio import PoolConfig
 
-from langgraph.prebuilt import InjectedStore
+# from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore
 from langchain_core.runnables import RunnableConfig
 
-from langgraph.prebuilt import InjectedState
+# from langgraph.prebuilt import InjectedState
 from langgraph.graph import StateGraph
 
 from typing_extensions import Annotated, Optional
+from langchain_core.messages import HumanMessage, BaseMessage, AIMessage, trim_messages
+
+
+from .token_counter import tiktoken_counter
 
 
 def extract_text_until_introduction(text):
@@ -119,7 +123,7 @@ connection_kwargs = {
 store_pool_config = PoolConfig(min_size=5,max_size=20)
 
 
-async def prepare_system_message(state: StateGraph, config: RunnableConfig, store: BaseStore):
+async def prepare_system_message(state, config: RunnableConfig, store: BaseStore):
     user_id = config.get("configurable", {}).get("user_id")
     conversation_id = config.get("configurable", {}).get("thread_id")
     
@@ -153,7 +157,16 @@ async def prepare_system_message(state: StateGraph, config: RunnableConfig, stor
 
     system_msg = prompt + msg
 
-    return [{"role": "system", "content": system_msg}] + state['messages']
+    trimmed_mesgs = trim_messages(
+        messages=state['messages'],
+        max_tokens=100000,
+        strategy="last",
+        token_counter=tiktoken_counter,
+        include_system=True,
+        allow_partial=False,
+    )
+
+    return [{"role": "system", "content": system_msg}] + trimmed_mesgs
 
 
 

@@ -24,14 +24,14 @@ from api.sql_ops import init_db, create_user, get_user_by_email, verify_password
 from fastapi.responses import JSONResponse
 from api.pydantic_models import *
 
-from api.chat_handlers import assign_chat_topic_chain, llm, metadata_extraction_chain, tools_for_agent, trimmer_last
-from langgraph.prebuilt import create_react_agent
+from api.chat_handlers import assign_chat_topic_chain, llm, metadata_extraction_chain, tools_for_agent, trimmer
 
 from fastapi.security import OAuth2PasswordBearer
 
 import jwt
-from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
+from jwt.exceptions import InvalidTokenError, ExpiredSignatureError, DecodeError
 from jwt import decode
+
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from datetime import datetime, timedelta
@@ -67,7 +67,7 @@ from typing_extensions import Optional
 from langchain_core.prompts import ChatPromptTemplate
 
 
-
+from langgraph.prebuilt import create_react_agent, ToolNode
 
 load_dotenv()
 
@@ -94,23 +94,46 @@ async def lifespan(app: FastAPI):
         app.state.checkpointer = checkpointer
         print('\nInitialized Postgres Checkpointer\n')
 
+    async with AsyncConnectionPool(conninfo=DB_URI_CHECKPOINTER, max_size=20, kwargs=connection_kwargs) as pool:
+        checkpointer = AsyncPostgresSaver(pool)
+        await checkpointer.setup()
+        app.state.checkpointer = checkpointer
+        print('\nInitialized Postgres Checkpointer\n')
+
         # Initialize Postgres Store
         async with AsyncPostgresStore.from_conn_string(conn_string=DB_URI_STORE, pool_config=store_pool_config) as store:
             await store.setup()
             app.state.store = store
             print('\nInitialized Postgres Store\n')
 
-            # Application lifespan starts here
-            yield  # This is the active lifespan context
+            # Initialize the graph
+            app.state.graph = create_react_agent(
+                llm, 
+                tools=tools_for_agent, 
+                state_modifier=prepare_system_message, 
+                store=store, 
+                checkpointer=checkpointer,
+            )
+            print('\nInitialized Graph\n')
 
-        # Cleanup store (if necessary)
-        del app.state.store
+            # Yield control to the app
+            yield
 
-    del app.state.checkpointer
+            # Cleanup Postgres Store
+            del app.state.store
+            print('\nCleaned up Postgres Store\n')
+
+        # Cleanup Postgres Checkpointer
+        del app.state.checkpointer
+        print('\nCleaned up Postgres Checkpointer\n')
+
+        # Cleanup Graph
+        del app.state.graph
+        print('\nCleaned up Graph\n')
 
     await close_redis_connection()
     print("\nClosed Redis connection")
-
+    
 
 # Initialize FastAPI
 app = FastAPI(docs_url="/api/docs", openapi_url="/api/openapi.json", debug=True, lifespan=lifespan)
@@ -590,17 +613,12 @@ async def websocket_llm_chat(
     websocket: WebSocket,
     current_user: dict = Depends(get_authenticated_user_websocket),
     checkpointer=Depends(get_psql_checkpointer),
-    store=Depends(get_psql_store)
+    store: AsyncPostgresStore = Depends(get_psql_store),
+    
 ):  
     config = {"configurable": {"user_id": current_user.get("user_id"), "thread_id": conversation_id}}
 
-    agent_graph = create_react_agent(
-        model=llm, 
-        tools=tools_for_agent, 
-        state_modifier=prepare_system_message,
-        store=store, 
-        checkpointer=checkpointer,
-    )
+    core_graph = app.state.graph
 
     await websocket.accept()
 
@@ -614,7 +632,7 @@ async def websocket_llm_chat(
 
             query = {"messages": [HumanMessage(content=user_query)]}
 
-            async for event in agent_graph.astream(query, stream_mode="values", config=config):
+            async for event in core_graph.astream(query, stream_mode="values", config=config):
                 if "messages" not in event:
                     continue
 

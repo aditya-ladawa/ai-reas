@@ -203,37 +203,39 @@ export default function ConversationPage() {
 
         {/* Right Column: Conversation Threads */}
         <div className="w-full md:w-1/3 bg-gray-800 p-6 rounded-lg shadow-lg space-y-4">
-          <h2 className="text-xl font-semibold text-cyan-300">Chat with AI</h2>
-          <div
-            ref={chatSectionRef}
-            className="h-64 bg-gray-700 rounded-lg overflow-y-auto p-4"
-          >
-            {threads.map((thread, index) => (
-              <div
-                key={index}
-                className={`p-2 rounded-md mb-2 ${
-                  thread.role === 'user' ? 'bg-cyan-500 text-black' : 'bg-gray-600'
-                }`}
-              >
-                <p>{thread.message}</p>
-              </div>
-            ))}
-          </div>
-          <input
-            type="text"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Ask something..."
-            className="w-full p-2 bg-gray-700 rounded-lg text-white"
-          />
-          <button
-            onClick={handleChatInput}
-            className="w-full py-2 mt-2 bg-gradient-to-r from-cyan-500 to-teal-400 rounded-lg"
-          >
-            Send
-          </button>
-          {errorMessage && <p className="text-red-500 mt-2">{errorMessage}</p>}
-        </div>
+  <h2 className="text-xl font-semibold text-cyan-300">Chat with AI</h2>
+  <div
+    ref={chatSectionRef}
+    className="h-[400px] md:h-[500px] bg-gray-700 rounded-lg overflow-y-auto p-4" // Increased height
+  >
+    {threads.map((thread, index) => (
+      <div
+        key={index}
+        className={`p-2 rounded-md mb-2 ${
+          thread.role === 'user' ? 'bg-cyan-500 text-black' : 'bg-gray-600'
+        }`}
+      >
+        <p>{thread.message}</p>
+      </div>
+    ))}
+  </div>
+  <div className="flex space-x-2"> {/* Added flex container for better input layout */}
+    <input
+      type="text"
+      value={chatInput}
+      onChange={(e) => setChatInput(e.target.value)}
+      placeholder="Ask something..."
+      className="flex-1 p-2 bg-gray-700 rounded-lg text-white"
+    />
+    <button
+      onClick={handleChatInput}
+      className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-teal-400 rounded-lg"
+    >
+      Send
+    </button>
+  </div>
+  {errorMessage && <p className="text-red-500 mt-2">{errorMessage}</p>}
+</div>
       </div>
       {isLoading && <div className="text-center text-cyan-300">Loading...</div>}
     </div>
