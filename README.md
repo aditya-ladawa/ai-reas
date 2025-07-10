@@ -8,9 +8,9 @@ This is an AI-based research assistant project by a solo developer (MSc in Data 
 
 ## Check out a demo video
 
-Click on the below image, or follow this link: https://youtu.be/YokpEpbh5Fo?si=fbqV8jEClVYlnbYR
+Click on the below image, or follow this link: https://youtu.be/C5fS85VSZ6A
 
-[![Watch the video](assets/ss1.png)](https://youtu.be/YokpEpbh5Fo?si=fbqV8jEClVYlnbYR)
+[![Watch the video](assets/ss1.png)](https://youtu.be/C5fS85VSZ6A)
 
 ![Example image of projects inside this SaaS](assets/ss2.png)
 ---
